@@ -1,96 +1,164 @@
 name: CI
-on: [push, pull_request]
+on: ["push"]
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build-x64:
+    runs-on: ubuntu-latest
+    container: alpine:3.22
     steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: 'recursive'
-    - name: cache-vulkansdk
-      id: cache-vulkansdk
-      uses: actions/cache@v1
-      with:
-        path: "VulkanSDK"
-        key: VulkanSDK-1.2.162.0-Installer
-    - name: vulkansdk
-      if: steps.cache-vulkansdk.outputs.cache-hit != 'true'
-      run: |
-        Invoke-WebRequest -Uri https://sdk.lunarg.com/sdk/download/1.2.162.0/windows/VulkanSDK-1.2.162.0-Installer.exe?Human=true -OutFile VulkanSDK-1.2.162.0-Installer.exe
-        7z x -aoa ./VulkanSDK-1.2.162.0-Installer.exe -oVulkanSDK
-        Remove-Item .\VulkanSDK\Demos, .\VulkanSDK\Samples, .\VulkanSDK\Third-Party, .\VulkanSDK\Tools, .\VulkanSDK\Tools32, .\VulkanSDK\Bin32, .\VulkanSDK\Lib32 -Recurse
-    - name: build
-      run: |
-        $env:VULKAN_SDK="$(pwd)/VulkanSDK"
-        mkdir build; cd build
-        cmake -A x64 ../src
-        cmake --build . --config Release -j 2
+      - name: Install git
+        run: |
+          apk update
+          apk add git
 
-  ubuntu:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Install Dependencies
+        run: |
+          apk update
+          apk add build-base cmake protobuf-dev vulkan-loader-dev glslang
+          mkdir build && cd build
+          cmake ../src
+          cmake --build . -j$(nproc) 
+     
+      - name: Upload x64 artifact
+        uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          retention-days: 1
+          name: realesrgan-ncnn-vulkan-x64
+          path: build/realesrgan-ncnn-vulkan
+
+  build-arm64:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: 'recursive'
-    - name: cache-vulkansdk
-      id: cache-vulkansdk
-      uses: actions/cache@v1
-      with:
-        path: "1.2.162.0"
-        key: vulkansdk-linux-x86_64-1.2.162.0
-    - name: vulkansdk
-      if: steps.cache-vulkansdk.outputs.cache-hit != 'true'
-      run: |
-        wget https://sdk.lunarg.com/sdk/download/1.2.162.0/linux/vulkansdk-linux-x86_64-1.2.162.0.tar.gz?Human=true -O vulkansdk-linux-x86_64-1.2.162.0.tar.gz
-        tar -xf vulkansdk-linux-x86_64-1.2.162.0.tar.gz
-        rm -rf 1.2.162.0/source 1.2.162.0/samples
-        find 1.2.162.0 -type f | grep -v -E 'vulkan|glslang' | xargs rm
-    - name: build
-      run: |
-        export VULKAN_SDK=`pwd`/1.2.162.0/x86_64
-        mkdir build && cd build
-        cmake ../src
-        cmake --build . -j 2
 
-  macos:
-    runs-on: macos-latest
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_12.4.app/Contents/Developer
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Compile code in alpine:3.22 ARM64 container
+        run: |
+          docker run --rm --platform linux/arm64 \
+          -v .:/source \
+          alpine:3.22 /bin/sh -c "
+            cd /source
+            apk update
+            apk add build-base cmake protobuf-dev vulkan-loader-dev glslang
+            mkdir build && cd build
+            cmake ../src
+            cmake --build . -j$(nproc)
+          "
+      
+      - name: Upload arm64 artifact
+        uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          retention-days: 1
+          name: realesrgan-ncnn-vulkan-arm64
+          path: build/realesrgan-ncnn-vulkan
+
+  build-arm32:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: 'recursive'
-    - name: cache-vulkansdk
-      id: cache-vulkansdk
-      uses: actions/cache@v1
-      with:
-        path: "vulkansdk-macos-1.2.162.0"
-        key: vulkansdk-macos-1.2.162.0
-    - name: vulkansdk
-      if: steps.cache-vulkansdk.outputs.cache-hit != 'true'
-      run: |
-        wget https://sdk.lunarg.com/sdk/download/1.2.162.0/mac/vulkansdk-macos-1.2.162.0.dmg?Human=true -O vulkansdk-macos-1.2.162.0.dmg
-        hdiutil attach vulkansdk-macos-1.2.162.0.dmg
-        cp -r /Volumes/vulkansdk-macos-1.2.162.0 .
-        rm -rf vulkansdk-macos-1.2.162.0/Applications
-        find vulkansdk-macos-1.2.162.0 -type f | grep -v -E 'vulkan|glslang|MoltenVK' | xargs rm
-        hdiutil detach /Volumes/vulkansdk-macos-1.2.162.0
-    - name: build-x86_64
-      run: |
-        export VULKAN_SDK=`pwd`/vulkansdk-macos-1.2.162.0/macOS
-        mkdir build-x86_64 && cd build-x86_64
-        cmake -DUSE_STATIC_MOLTENVK=ON -DCMAKE_OSX_ARCHITECTURES="x86_64" \
-            -DVulkan_INCLUDE_DIR=`pwd`/../vulkansdk-macos-1.2.162.0/MoltenVK/include \
-            -DVulkan_LIBRARY=`pwd`/../vulkansdk-macos-1.2.162.0/MoltenVK/MoltenVK.xcframework/macos-arm64_x86_64/libMoltenVK.a \
-            ../src
-        cmake --build . -j 3
-    - name: build-arm64
-      run: |
-        export VULKAN_SDK=`pwd`/vulkansdk-macos-1.2.162.0/macOS
-        mkdir build-arm64 && cd build-arm64
-        cmake -DUSE_STATIC_MOLTENVK=ON -DCMAKE_OSX_ARCHITECTURES="arm64" \
-            -DVulkan_INCLUDE_DIR=`pwd`/../vulkansdk-macos-1.2.162.0/MoltenVK/include \
-            -DVulkan_LIBRARY=`pwd`/../vulkansdk-macos-1.2.162.0/MoltenVK/MoltenVK.xcframework/macos-arm64_x86_64/libMoltenVK.a \
-            ../src
-        cmake --build . -j 3
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Compile code in alpine:3.22 ARM32 container
+        run: |
+          docker run --rm --platform linux/arm/v7 \
+          -v .:/source \
+          alpine:3.22 /bin/sh -c "
+            cd /source
+            apk update
+            apk add build-base cmake protobuf-dev vulkan-loader-dev glslang 
+            mkdir build && cd build
+            cmake ../src
+            cmake --build . -j$(nproc)
+          "
+      
+      - name: Upload arm32 artifact
+        uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          retention-days: 1
+          name: realesrgan-ncnn-vulkan-arm32
+          path: build/realesrgan-ncnn-vulkan
+
+  create_release_upload:
+    needs: [build-x64, build-arm64, build-arm32]
+    runs-on: ubuntu-latest
+    # CRITICAL: This condition ensures the job only runs if the push was a tag
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: .
+          path: ./artifacts
+      
+      - name: List Downloaded Files
+        run: ls -R ./artifacts
+
+        # A. Create the GitHub Release
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      # B. Upload ARM64 Asset
+      - name: Upload ARM64 Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          # Path points to the file downloaded into the artifact directory
+          asset_path: ./artifacts/realesrgan-ncnn-vulkan-arm64
+          asset_name: realesrgan-ncnn-vulkan-alpine-arm64-${{ github.ref_name }}
+          asset_content_type: application/octet-stream
+
+      # C. Upload X64 Asset
+      - name: Upload AMD64 Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/realesrgan-ncnn-vulkan-x64
+          asset_name: realesrgan-ncnn-vulkan-alpine-x64-${{ github.ref_name }}
+          asset_content_type: application/octet-stream
+
+      # D. Upload ARM32 Asset
+      - name: Upload AMD64 Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/realesrgan-ncnn-vulkan-arm32
+          asset_name: realesrgan-ncnn-vulkan-alpine-arm32-${{ github.ref_name }}
+          asset_content_type: application/octet-stream

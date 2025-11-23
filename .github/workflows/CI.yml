@@ -1,5 +1,8 @@
 name: CI
 on: ["push"]
+permissions:
+  packages: write
+  contents: write
 
 jobs:
   build-x64:
@@ -23,14 +26,15 @@ jobs:
           mkdir build && cd build
           cmake ../src
           cmake --build . -j$(nproc) 
+          mv realesrgan-ncnn-vulkan realesrgan-ncnn-vulkan-alpine-x64
      
       - name: Upload x64 artifact
         uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/')
         with:
           retention-days: 1
-          name: realesrgan-ncnn-vulkan-x64
-          path: build/realesrgan-ncnn-vulkan
+          name: realesrgan-ncnn-vulkan-alpine-x64
+          path: build/realesrgan-ncnn-vulkan-alpine-x64
 
   build-arm64:
     runs-on: ubuntu-latest
@@ -57,6 +61,7 @@ jobs:
             mkdir build && cd build
             cmake ../src
             cmake --build . -j$(nproc)
+            mv realesrgan-ncnn-vulkan realesrgan-ncnn-vulkan-alpine-arm64
           "
       
       - name: Upload arm64 artifact
@@ -64,8 +69,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           retention-days: 1
-          name: realesrgan-ncnn-vulkan-arm64
-          path: build/realesrgan-ncnn-vulkan
+          name: realesrgan-ncnn-vulkan-alpine-arm64
+          path: build/realesrgan-ncnn-vulkan-alpine-arm64
 
   build-arm32:
     runs-on: ubuntu-latest
@@ -92,6 +97,7 @@ jobs:
             mkdir build && cd build
             cmake ../src
             cmake --build . -j$(nproc)
+            mv realesrgan-ncnn-vulkan realesrgan-ncnn-vulkan-alpine-arm32
           "
       
       - name: Upload arm32 artifact
@@ -99,8 +105,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           retention-days: 1
-          name: realesrgan-ncnn-vulkan-arm32
-          path: build/realesrgan-ncnn-vulkan
+          name: realesrgan-ncnn-vulkan-alpine-arm32
+          path: build/realesrgan-ncnn-vulkan-alpine-arm32
 
   create_release_upload:
     needs: [build-x64, build-arm64, build-arm32]
@@ -108,57 +114,29 @@ jobs:
     # CRITICAL: This condition ensures the job only runs if the push was a tag
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - name: Download Artifacts
+      - name: Checkout To Create Release
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: .
           path: ./artifacts
       
       - name: List Downloaded Files
-        run: ls -R ./artifacts
+        run: |
+          ls -lahR ./artifacts
 
-        # A. Create the GitHub Release
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+        # id: create_release
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
+          # tag_name: ${{ github.ref }}
+          # name: Release ${{ github.ref }}
+          draft: true
+          files: |
+            ./artifacts/realesrgan-ncnn-vulkan-alpine-arm64/realesrgan-ncnn-vulkan-alpine-arm64
+            ./artifacts/realesrgan-ncnn-vulkan-alpine-x64/realesrgan-ncnn-vulkan-alpine-x64
+            ./artifacts/realesrgan-ncnn-vulkan-alpine-arm32/realesrgan-ncnn-vulkan-alpine-arm32
 
-      # B. Upload ARM64 Asset
-      - name: Upload ARM64 Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          # Path points to the file downloaded into the artifact directory
-          asset_path: ./artifacts/realesrgan-ncnn-vulkan-arm64
-          asset_name: realesrgan-ncnn-vulkan-alpine-arm64-${{ github.ref_name }}
-          asset_content_type: application/octet-stream
-
-      # C. Upload X64 Asset
-      - name: Upload AMD64 Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/realesrgan-ncnn-vulkan-x64
-          asset_name: realesrgan-ncnn-vulkan-alpine-x64-${{ github.ref_name }}
-          asset_content_type: application/octet-stream
-
-      # D. Upload ARM32 Asset
-      - name: Upload AMD64 Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/realesrgan-ncnn-vulkan-arm32
-          asset_name: realesrgan-ncnn-vulkan-alpine-arm32-${{ github.ref_name }}
-          asset_content_type: application/octet-stream
